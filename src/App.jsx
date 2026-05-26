@@ -32,10 +32,13 @@ function App() {
   const [status, setStatus] = useState('Upload an image to begin.')
   const [imageMeta, setImageMeta] = useState(null)
   const [cursor, setCursor] = useState({ active: false, col: -1, row: -1, x: 0, y: 0 })
+  const sampleSurface = useMemo(() => {
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    return { canvas, context }
+  }, [])
 
   const outputCanvasRef = useRef(null)
-  const sampleCanvasRef = useRef(document.createElement('canvas'))
-  const sampleContextRef = useRef(sampleCanvasRef.current.getContext('2d', { willReadFrequently: true }))
   const imageRef = useRef(null)
   const frameRef = useRef({
     cols: 0,
@@ -58,7 +61,7 @@ function App() {
     const renderFrame = (time) => {
       const canvas = outputCanvasRef.current
       const image = imageRef.current
-      if (!canvas || !image) {
+      if (!canvas || !image || !sampleSurface.context) {
         animationFrame = requestAnimationFrame(renderFrame)
         return
       }
@@ -83,8 +86,8 @@ function App() {
         cols,
         rows,
         settings,
-        sampleCanvasRef.current,
-        sampleContextRef.current,
+        sampleSurface.canvas,
+        sampleSurface.context,
       )
       baseIndicesRef.current = mapLuminanceToIndices(luminance, settings.ramp)
 
@@ -132,7 +135,7 @@ function App() {
 
     animationFrame = requestAnimationFrame(renderFrame)
     return () => cancelAnimationFrame(animationFrame)
-  }, [cursor, settings])
+  }, [cursor, sampleSurface, settings])
 
   const onImageUpload = (event) => {
     const file = event.target.files?.[0]
