@@ -1,6 +1,6 @@
-# ASCIImatter Studio
+# PhosphorEngine
 
-ASCIImatter Studio is a modern web app that turns uploaded images into **reactive monochrome ASCII art** in real time.
+PhosphorEngine is a modern web app that turns uploaded images into **reactive monochrome ASCII art** in real time.
 It is designed for social-first visuals (Instagram reels/posts), with interactive cursor warping and quick export in **PNG, JPEG, and SVG** formats.
 
 ---
@@ -157,7 +157,7 @@ npm run build
 
 Use this prompt with coding assistants to extend the project:
 
-> Build and improve a modern web app called ASCIImatter Studio that converts uploaded images into reactive monochrome ASCII art in real time using Vite + React. Keep the architecture modular with ImageProcessor, AsciiMapper, DistortionEngine, Renderer, and ExportService layers. Preserve a source-of-truth ASCII grid and apply transient cursor-based distortion with smooth falloff and spring-back recovery. Support distortion presets (Warp, Ripple, Glitch-lite), controls for density/ramp/brightness/contrast/invert, and exports to PNG, JPEG, and SVG. Maintain an Instagram-ready visual style with subtle Three.js background motion, polished dark UI, and smooth interactions. Prioritize performance, readability, and clean component boundaries.
+> Build and improve a modern web app called PhosphorEngine that converts uploaded images into reactive monochrome ASCII art in real time using Vite + React. Keep the architecture modular with ImageProcessor, AsciiMapper, DistortionEngine, Renderer, and ExportService layers. Preserve a source-of-truth ASCII grid and apply transient cursor-based distortion with smooth falloff and spring-back recovery. Support distortion presets (Warp, Ripple, Glitch-lite), controls for density/ramp/brightness/contrast/invert, and exports to PNG, JPEG, and SVG. Maintain an Instagram-ready visual style with subtle Three.js background motion, polished dark UI, and smooth interactions. Prioritize performance, readability, and clean component boundaries.
 
 ---
 

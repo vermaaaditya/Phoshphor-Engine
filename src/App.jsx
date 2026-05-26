@@ -193,7 +193,7 @@ function App() {
     <main className="app-shell">
       <BackgroundScene />
       <section className="panel controls-panel">
-        <h1>ASCIImatter Studio</h1>
+        <h1>PhosphorEngine</h1>
         <p className="subtitle">Reactive monochrome ASCII generator for social-ready visuals.</p>
 
         <label className="upload" htmlFor="fileInput">
