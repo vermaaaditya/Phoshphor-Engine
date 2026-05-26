@@ -74,15 +74,15 @@ export default function CanvasStage({
   }, []);
 
   useEffect(() => {
-    audioAnalyzerRef.current.start();
-    return () => audioAnalyzerRef.current.stop();
+    const analyzer = audioAnalyzerRef.current;
+    analyzer.start();
+    return () => analyzer.stop();
   }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     if (!sourceImage || !stageSize.width || !stageSize.height) {
-      setAsciiGrid(null);
       return undefined;
     }
 

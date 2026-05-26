@@ -88,10 +88,10 @@ export default class AudioAnalyzer {
   }
 
   getMetrics(time = performance.now()) {
-    let bass = 0
-    let mid = 0
-    let treble = 0
-    let level = 0
+    let bass
+    let mid
+    let treble
+    let level
 
     if (this.active && this.analyser && this.frequencyData) {
       this.analyser.getByteFrequencyData(this.frequencyData)
