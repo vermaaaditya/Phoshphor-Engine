@@ -62,6 +62,8 @@ export default function CanvasStage({
   distortionMode,
   isAudioActive,
   exportTrigger,
+  activeRamp,
+  audioMode,
 }) {
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
@@ -121,15 +123,15 @@ export default function CanvasStage({
   // Deferred microphone setup (starts strictly when user toggles ON)
   useEffect(() => {
     const analyzer = audioAnalyzerRef.current;
-    if (isAudioActive) {
-      analyzer.start();
+    if (isAudioActive || audioMode) {
+      analyzer.init();
     } else {
       analyzer.stop();
     }
     return () => {
       analyzer.stop();
     };
-  }, [isAudioActive]);
+  }, [isAudioActive, audioMode]);
 
   // Load and process image whenever source, stage scale, or density changes
   useEffect(() => {
@@ -200,23 +202,49 @@ export default function CanvasStage({
         canvas.height = pixelHeight;
       }
 
-      // Reset and fill with the decoupled canvas background
-      let clearColor = 'transparent';
-      if (canvasBg === 'Black') {
-        clearColor = '#0E0E0E';
-      } else if (canvasBg === 'Custom') {
-        clearColor = customBgColor;
-      }
-
+      // 1. Clear screen with Decay trails (Phosphor Decay / Heavy Decay)
       context.setTransform(1, 0, 0, 1, 0, 0);
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      if (clearColor !== 'transparent') {
-        context.fillStyle = clearColor;
+      if (audioMode) {
+        // Heavy decay for Audio Oscilloscope mode
+        context.fillStyle = 'rgba(19, 19, 19, 0.3)';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      } else {
+        // Phosphor decay for Standard Mode
+        context.fillStyle = 'rgba(19, 19, 19, 0.2)';
         context.fillRect(0, 0, canvas.width, canvas.height);
       }
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      // We skip drawing ASCII grid on canvas when no image is loaded
+      // AUDIO OSCILLOSCOPE MODE
+      if (audioMode) {
+        const frequencyData = audioAnalyzerRef.current.getFrequencyData();
+        
+        if (frequencyData && frequencyData.length > 0) {
+          context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ascii-color').trim() || '#CCFF00';
+          context.font = '14px "JetBrains Mono", monospace';
+          context.textAlign = 'center';
+          context.textBaseline = 'middle';
+          
+          for (let x = 0; x < width; x += 15) {
+            const freqIndex = Math.min(
+              frequencyData.length - 1,
+              Math.floor((x / width) * frequencyData.length)
+            );
+            const frequencyValue = frequencyData[freqIndex];
+            const y = (height / 2) - (frequencyValue * 1.5);
+            
+            const chars = ['#', '@', '%', '$', '&', 'W', 'M'];
+            const char = chars[Math.floor(Math.random() * chars.length)];
+            
+            context.fillText(char, x, y);
+          }
+        }
+        
+        frameId = window.requestAnimationFrame(render);
+        return;
+      }
+
+      // STANDARD IMAGE PROCESSING MODE
       if (!sourceImage || !grid || !luminanceData || !distortionEngineRef.current) {
         frameId = window.requestAnimationFrame(render);
         return;
@@ -225,16 +253,12 @@ export default function CanvasStage({
       const { cols, rows } = grid;
       const engine = distortionEngineRef.current;
 
-      // 1. Capture bass energy level if microphone is active
       const bassEnergy = isAudioActive ? audioAnalyzerRef.current.getBassEnergy() : 0;
 
-      // 2. Drive the physics simulation loop (recovery = spring pull, friction = damping)
-      // Maps the recovery slider 1-100 directly to 0.01-1.0 coefficients
       const recovery = Math.max(0.01, distortionRecovery / 100);
       const friction = 0.90;
-      const displacements = engine.update(recovery, friction);
+      const displacements = engine.update(recovery, friction, performance.now());
 
-      // 3. Set text styling and configurations - decoupled HSL color tint
       context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ascii-color').trim() || '#CCFF00';
       const cellWidth = width / cols;
       const cellHeight = height / rows;
@@ -243,24 +267,28 @@ export default function CanvasStage({
       context.textAlign = 'left';
       context.textBaseline = 'top';
 
-      // Dynamically select character ramp preset to fix RAW/GRID/PROC modes
-      const ramp = RAMPS[matrixMode] || RAMPS.RAW;
+      const ramp = activeRamp || '@%#*+=-:. ';
 
-      // 4. Draw characters at physics-displaced locations
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const idx = r * cols + c;
           const luma = luminanceData[idx];
 
-          // Map luminance value directly to the index of character ramp
-          const rampIndex = Math.min(ramp.length - 1, Math.max(0, Math.floor(luma * ramp.length)));
+          let rampIndex = Math.min(ramp.length - 1, Math.max(0, Math.floor(luma * ramp.length)));
+          
+          // Edge Noise: add +/- 1 jitter for luma in [0.2, 0.8] range
+          if (luma > 0.2 && luma < 0.8) {
+            if (Math.random() > 0.9) {
+              const shift = Math.random() > 0.5 ? 1 : -1;
+              rampIndex = Math.min(ramp.length - 1, Math.max(0, rampIndex + shift));
+            }
+          }
+          
           const char = ramp[rampIndex];
 
-          // Retain displacement vectors (displacements has structure [x, y, x, y, ...])
           const dx = displacements[idx * 2];
           const dy = displacements[idx * 2 + 1];
 
-          // Draw the character
           const posX = c * cellWidth + dx * cellWidth;
           const posY = r * cellHeight + dy * cellHeight;
 
@@ -273,7 +301,7 @@ export default function CanvasStage({
 
     frameId = window.requestAnimationFrame(render);
     return () => window.cancelAnimationFrame(frameId);
-  }, [grid, luminanceData, sourceImage, canvasBg, customBgColor, distortionRecovery, isAudioActive, matrixMode]);
+  }, [grid, luminanceData, sourceImage, canvasBg, customBgColor, distortionRecovery, isAudioActive, matrixMode, activeRamp, audioMode]);
 
   // Handle canvas exporting triggers (JPEG, PNG, SVG)
   useEffect(() => {
@@ -392,7 +420,7 @@ export default function CanvasStage({
       />
 
       {/* Retro-techy brutalist upload container box centered in the stage when empty */}
-      {!sourceImage && (
+      {!sourceImage && !audioMode && (
         <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-surface-container-lowest z-20">
           {/* Subtle falling pattern backdrop for the empty stage area */}
           <div className="absolute inset-0 z-0 pointer-events-none opacity-[0.14] select-none">

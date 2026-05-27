@@ -86,18 +86,23 @@ export default class DistortionEngine {
    * @param {number} friction - Velocity damping factor (typically 0.8 to 0.99)
    * @returns {Float32Array} The displacement buffer
    */
-  update(recovery, friction) {
+  update(recovery, friction, time = 0) {
     const len = this.cols * this.rows * 2;
+    const driftX = Math.sin(time * 0.001) * 0.1;
+    const driftY = Math.cos(time * 0.0008) * 0.1;
     
-    for (let i = 0; i < len; i++) {
+    for (let i = 0; i < len; i += 2) {
       // 1. Spring force: Force is proportional to displacement but in the opposite direction
-      const springForce = -recovery * this.displacements[i];
+      const springForceX = -recovery * this.displacements[i];
+      const springForceY = -recovery * this.displacements[i + 1];
       
-      // 2. Accumulate spring force and apply velocity friction
-      this.velocities[i] = (this.velocities[i] + springForce) * friction;
+      // 2. Accumulate spring force, apply global autonomous drift, and apply velocity friction
+      this.velocities[i] = (this.velocities[i] + springForceX + driftX) * friction;
+      this.velocities[i + 1] = (this.velocities[i + 1] + springForceY + driftY) * friction;
       
       // 3. Integrate velocity to update displacement
       this.displacements[i] += this.velocities[i];
+      this.displacements[i + 1] += this.velocities[i + 1];
     }
     
     return this.displacements;

@@ -3,6 +3,8 @@ import Header from './components/Header';
 import Cockpit from './components/Cockpit';
 import CanvasStage from './components/CanvasStage';
 import BackgroundScene from './components/BackgroundScene';
+import { PRESETS } from './lib/presets';
+import LoginModal from './components/LoginModal';
 
 function App() {
   const [density, setDensity] = useState(82);
@@ -27,6 +29,24 @@ function App() {
 
   // 1. Rainbow RGB color cycling state
   const [isRgbActive, setIsRgbActive] = useState(false);
+
+  // Preset Engine & Oscilloscope States
+  const [activePreset, setActivePreset] = useState('PHOSPHOR');
+  const [activeRamp, setActiveRamp] = useState(PRESETS.PHOSPHOR.ramp);
+  const [audioMode, setAudioMode] = useState(false);
+  const [isLoginModalOpen, setLoginModalOpen] = useState(false);
+
+  const applyPreset = (presetKey) => {
+    const preset = PRESETS[presetKey];
+    if (!preset) return;
+    setActivePreset(presetKey);
+    setDensity(preset.density);
+    setContrast(preset.contrast);
+    setActiveRamp(preset.ramp);
+    setDistortionMode(preset.distortionMode);
+    setMatrixMode(preset.matrixMode);
+    document.documentElement.style.setProperty('--ascii-color', preset.asciiColor);
+  };
 
   // 2. High-performance requestAnimationFrame color cycling loop
   useEffect(() => {
@@ -87,6 +107,11 @@ function App() {
             exportFormat={exportFormat}
             setExportFormat={setExportFormat}
             onExport={() => setExportTrigger({ format: exportFormat, timestamp: Date.now() })}
+            activePreset={activePreset}
+            applyPreset={applyPreset}
+            audioMode={audioMode}
+            setAudioMode={setAudioMode}
+            setLoginModalOpen={setLoginModalOpen}
           />
           <CanvasStage
             density={density}
@@ -99,6 +124,8 @@ function App() {
             distortionMode={distortionMode}
             isAudioActive={isAudioActive}
             exportTrigger={exportTrigger}
+            activeRamp={activeRamp}
+            audioMode={audioMode}
           />
         </main>
       ) : (
@@ -147,6 +174,9 @@ function App() {
           <span className="font-data-mono text-[10px] uppercase">COCKPIT</span>
         </button>
       </footer>
+
+      {/* LoginModal Dialog Overlay */}
+      <LoginModal isOpen={isLoginModalOpen} onClose={() => setLoginModalOpen(false)} />
     </div>
   );
 }

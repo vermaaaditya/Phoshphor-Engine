@@ -13,7 +13,7 @@ export default class AudioAnalyzer {
   /**
    * Prompts the user for microphone access and starts analyzing
    */
-  async start() {
+  async init() {
     if (this.active) {
       return;
     }
@@ -82,5 +82,18 @@ export default class AudioAnalyzer {
     
     // Values range from 0 (silence) to 255 (maximum volume)
     return count > 0 ? (sum / count) / 255 : 0.0;
+  }
+
+  /**
+   * Returns a Uint8Array of the full frequency spectrum
+   * 
+   * @returns {Uint8Array} Byte frequency levels
+   */
+  getFrequencyData() {
+    if (!this.active || !this.analyser || !this.dataArray) {
+      return new Uint8Array(0);
+    }
+    this.analyser.getByteFrequencyData(this.dataArray);
+    return this.dataArray;
   }
 }

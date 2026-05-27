@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import ThemeTuner from './ThemeTuner';
 import { FallingPattern } from '@/components/ui/falling-pattern';
+import { PRESETS } from '../lib/presets';
 
 const MATRIX_MODES_WITH_ICONS = [
   { mode: 'RAW', icon: 'photo' },
@@ -30,6 +31,11 @@ export default function Cockpit({
   exportFormat,
   setExportFormat,
   onExport,
+  activePreset,
+  applyPreset,
+  audioMode,
+  setAudioMode,
+  setLoginModalOpen,
 }) {
   const fileInputRef = useRef(null);
 
@@ -87,6 +93,31 @@ export default function Cockpit({
 
         {/* Control sliders and menus */}
         <div className="p-margin-sm flex flex-col gap-margin-md flex-grow">
+          {/* Aesthetic Presets */}
+          <div className="flex flex-col gap-2 border-b border-outline-variant pb-4">
+            <label className="font-label-caps text-label-caps text-on-surface-variant uppercase">AESTHETIC_PRESETS</label>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.keys(PRESETS).map((key) => {
+                const preset = PRESETS[key];
+                const isActive = activePreset === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => applyPreset(key)}
+                    className={`font-data-mono py-2 uppercase text-[10px] text-center border-2 border-black transition-all flex items-center justify-center gap-1 ${
+                      isActive 
+                        ? 'bg-accent-pop text-background font-bold border-black neo-pop-active' 
+                        : 'bg-surface-container-high text-on-surface hover:bg-surface-variant'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Upload Action */}
           <div className="flex flex-col gap-2">
             <button
@@ -124,6 +155,20 @@ export default function Cockpit({
               <span>AUDIO_REACT: {isAudioActive ? 'ON' : 'OFF'}</span>
               <span className="material-symbols-outlined text-base">
                 {isAudioActive ? 'mic' : 'mic_off'}
+              </span>
+            </button>
+            <button
+              onClick={() => setAudioMode(!audioMode)}
+              className={`w-full font-data-mono py-3 font-bold uppercase flex items-center justify-center gap-2 border-2 border-black neo-pop-active transition-all ${
+                audioMode 
+                  ? 'bg-accent-pop text-background border-black' 
+                  : 'bg-surface-container-high text-on-surface hover:bg-surface-variant'
+              }`}
+              type="button"
+            >
+              <span>AUDIO_OSCILLOSCOPE: {audioMode ? 'ON' : 'OFF'}</span>
+              <span className="material-symbols-outlined text-base">
+                {audioMode ? 'graphic_eq' : 'equalizer'}
               </span>
             </button>
           </div>
@@ -269,7 +314,7 @@ export default function Cockpit({
           </div>
 
           <button 
-            onClick={onExport}
+            onClick={() => setLoginModalOpen(true)}
             className="w-full bg-accent-pop text-background font-data-mono py-3 font-bold hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none transition-all uppercase border-2 border-black neo-pop-active flex items-center justify-center gap-2 mt-1"
           >
             <span>EXPORT</span>
