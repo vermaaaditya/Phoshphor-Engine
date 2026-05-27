@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import ImageProcessor from '../lib/ImageProcessor';
+import ImageProcessor from '../lib/imageProcessor';
 import DistortionEngine from '../lib/DistortionEngine';
 import AudioAnalyzer from '../lib/AudioAnalyzer';
 import { FallingPattern } from '@/components/ui/falling-pattern';
