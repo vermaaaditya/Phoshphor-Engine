@@ -1,24 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { RAMP_PRESETS, mapLuminanceToIndices } from '../lib/asciiMapper';
-import AudioAnalyzer from '../lib/AudioAnalyzer';
+import ImageProcessor from '../lib/ImageProcessor';
 import DistortionEngine from '../lib/DistortionEngine';
-import { processImageToLuminance } from '../lib/imageProcessor';
-
-const RAMP_BY_MODE = {
-  RAW: RAMP_PRESETS.Classic,
-  GRID: RAMP_PRESETS.Dense,
-  PROC: RAMP_PRESETS.Blocks,
-};
-
-const DISTORTION_PRESET_BY_MODE = {
-  RAW: 'Default',
-  GRID: 'Ripple',
-  PROC: 'Glitch-lite',
-};
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
+import AudioAnalyzer from '../lib/AudioAnalyzer';
+import { FallingPattern } from '@/components/ui/falling-pattern';
 
 function loadImage(source) {
   return new Promise((resolve, reject) => {
@@ -36,21 +20,74 @@ function getGridMetrics(width, height, density) {
   return { cols, rows };
 }
 
+// Calculates the largest rectangle that fits inside container bounds matching the ratio
+function getAspectRatioSize(containerWidth, containerHeight, ratioStr) {
+  if (!containerWidth || !containerHeight) {
+    return { width: 0, height: 0 };
+  }
+  
+  if (ratioStr === 'FILL') {
+    return { width: containerWidth, height: containerHeight };
+  }
+  
+  const [wRatio, hRatio] = ratioStr.split(':').map(Number);
+  const targetRatio = wRatio / hRatio;
+  
+  let width = containerWidth;
+  let height = containerWidth / targetRatio;
+  
+  if (height > containerHeight) {
+    height = containerHeight;
+    width = containerHeight * targetRatio;
+  }
+  
+  return { width, height };
+}
+
+// Dynamic character ramps mapped strictly to active matrixMode presets
+const RAMPS = {
+  RAW: '@%#*+=-:. ',
+  GRID: '█▓▒░ .',
+  PROC: 'MWN$@B%8&#+=;:,.- ',
+};
+
 export default function CanvasStage({
   density,
   contrast,
   matrixMode,
   sourceImage,
+  setSourceImage,
   distortionStrength,
+  distortionRecovery,
+  distortionMode,
+  isAudioActive,
+  exportTrigger,
 }) {
   const stageRef = useRef(null);
   const canvasRef = useRef(null);
-  const processingCanvasRef = useRef(null);
-  const distortionEngineRef = useRef(new DistortionEngine(0));
+  const distortionEngineRef = useRef(null);
   const audioAnalyzerRef = useRef(new AudioAnalyzer());
-  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
-  const [asciiGrid, setAsciiGrid] = useState(null);
+  const colorInputRef = useRef(null);
+  const canvasFileInputRef = useRef(null);
 
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [luminanceData, setLuminanceData] = useState(null);
+  const [grid, setGrid] = useState(null);
+
+  // Advanced aspect ratio and background state hooks
+  const [aspectRatio, setAspectRatio] = useState('16:9');
+  const [canvasBg, setCanvasBg] = useState('Black');
+  const [customBgColor, setCustomBgColor] = useState('#131A1C');
+
+  // Sync canvas background HSL/Hex to a custom CSS variable
+  useEffect(() => {
+    let bgValue = 'transparent';
+    if (canvasBg === 'Black') bgValue = '#0E0E0E';
+    else if (canvasBg === 'Custom') bgValue = customBgColor;
+    document.documentElement.style.setProperty('--canvas-bg', bgValue);
+  }, [canvasBg, customBgColor]);
+
+  // ResizeObserver to track container dimension changes
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) {
@@ -73,71 +110,70 @@ export default function CanvasStage({
     return () => observer.disconnect();
   }, []);
 
+  // Compute exact visual dimensions for the canvas fitting within the stage
+  // Subtract toolbar height (50px) to prevent layout overlaps
+  const canvasSize = getAspectRatioSize(
+    stageSize.width,
+    Math.max(stageSize.height - 50, 0),
+    aspectRatio
+  );
+
+  // Deferred microphone setup (starts strictly when user toggles ON)
   useEffect(() => {
     const analyzer = audioAnalyzerRef.current;
-    analyzer.start();
-    return () => analyzer.stop();
-  }, []);
+    if (isAudioActive) {
+      analyzer.start();
+    } else {
+      analyzer.stop();
+    }
+    return () => {
+      analyzer.stop();
+    };
+  }, [isAudioActive]);
 
+  // Load and process image whenever source, stage scale, or density changes
   useEffect(() => {
     let cancelled = false;
 
-    if (!sourceImage || !stageSize.width || !stageSize.height) {
+    if (!sourceImage || !canvasSize.width || !canvasSize.height) {
+      setLuminanceData(null);
+      setGrid(null);
+      distortionEngineRef.current = null;
       return undefined;
     }
 
-    if (!processingCanvasRef.current) {
-      processingCanvasRef.current = document.createElement('canvas');
-    }
-
-    const buildAsciiGrid = async () => {
+    const buildGrid = async () => {
       try {
         const image = await loadImage(sourceImage);
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
-        const { cols, rows } = getGridMetrics(stageSize.width, stageSize.height, density);
-        const processingContext = processingCanvasRef.current.getContext('2d', { willReadFrequently: true });
-        if (!processingContext) {
-          return;
-        }
-
-        const ramp = RAMP_BY_MODE[matrixMode] ?? RAMP_PRESETS.Classic;
-        const luminance = processImageToLuminance(
-          image,
-          cols,
-          rows,
-          {
-            brightness: 0,
-            contrast,
-            invert: false,
-          },
-          processingCanvasRef.current,
-          processingContext,
-        );
+        const { cols, rows } = getGridMetrics(canvasSize.width, canvasSize.height, density);
+        const luma = ImageProcessor(image, cols, rows);
 
         if (!cancelled) {
-          setAsciiGrid({
-            cols,
-            rows,
-            ramp,
-            indices: mapLuminanceToIndices(luminance, ramp),
-          });
+          // Re-create the physics distortion lattice with the exact new dimensions
+          distortionEngineRef.current = new DistortionEngine(cols, rows);
+          setLuminanceData(luma);
+          setGrid({ cols, rows });
         }
-      } catch {
+      } catch (err) {
+        console.error("Failed to load and process selected image:", err);
         if (!cancelled) {
-          setAsciiGrid(null);
+          setLuminanceData(null);
+          setGrid(null);
+          distortionEngineRef.current = null;
         }
       }
     };
 
-    buildAsciiGrid();
+    buildGrid();
+
     return () => {
       cancelled = true;
     };
-  }, [contrast, density, matrixMode, sourceImage, stageSize.height, stageSize.width]);
+  }, [sourceImage, canvasSize.width, canvasSize.height, density]);
 
+  // Canvas drawing & physics update loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -150,71 +186,85 @@ export default function CanvasStage({
     }
 
     let frameId = 0;
-    let previousTime = performance.now();
 
-    const render = (time) => {
+    const render = () => {
       const width = Math.max(canvas.clientWidth, 1);
       const height = Math.max(canvas.clientHeight, 1);
-      const devicePixelRatio = window.devicePixelRatio || 1;
-      const pixelWidth = Math.round(width * devicePixelRatio);
-      const pixelHeight = Math.round(height * devicePixelRatio);
+      const dpr = window.devicePixelRatio || 1;
+      const pixelWidth = Math.round(width * dpr);
+      const pixelHeight = Math.round(height * dpr);
 
+      // Support High-DPI screens
       if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
         canvas.width = pixelWidth;
         canvas.height = pixelHeight;
       }
 
+      // Reset and fill with the decoupled canvas background
+      let clearColor = 'transparent';
+      if (canvasBg === 'Black') {
+        clearColor = '#0E0E0E';
+      } else if (canvasBg === 'Custom') {
+        clearColor = customBgColor;
+      }
+
       context.setTransform(1, 0, 0, 1, 0, 0);
       context.clearRect(0, 0, canvas.width, canvas.height);
-      context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent-pop').trim() || '#CCFF00';
-      context.textBaseline = 'top';
+      if (clearColor !== 'transparent') {
+        context.fillStyle = clearColor;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      if (!sourceImage || !asciiGrid) {
-        context.font = '18px "JetBrains Mono", monospace';
-        context.textAlign = 'center';
-        context.fillText('UPLOAD_SOURCE', width / 2, height / 2 - 12);
-        context.font = '12px "JetBrains Mono", monospace';
-        context.fillText('LOAD AN IMAGE TO ACTIVATE THE RENDERER', width / 2, height / 2 + 14);
-        previousTime = time;
+      // We skip drawing ASCII grid on canvas when no image is loaded
+      if (!sourceImage || !grid || !luminanceData || !distortionEngineRef.current) {
         frameId = window.requestAnimationFrame(render);
         return;
       }
 
-      const delta = Math.max(8, Math.min(33, time - previousTime || 16.67));
-      previousTime = time;
-      const audioMetrics = audioAnalyzerRef.current.getMetrics(time);
+      const { cols, rows } = grid;
       const engine = distortionEngineRef.current;
-      engine.resize(asciiGrid.cols, asciiGrid.rows);
-      engine.update({
-        time,
-        delta,
-        preset: DISTORTION_PRESET_BY_MODE[matrixMode] ?? 'Default',
-        strength: (distortionStrength / 100) * (0.7 + audioMetrics.level * 0.6),
-        audioLevel: audioMetrics.level,
-        audioPulse: audioMetrics.pulse,
-      });
 
-      const cellWidth = width / asciiGrid.cols;
-      const cellHeight = height / asciiGrid.rows;
-      const fontSize = Math.max(8, Math.min(cellHeight * 1.03, cellWidth * 1.86));
+      // 1. Capture bass energy level if microphone is active
+      const bassEnergy = isAudioActive ? audioAnalyzerRef.current.getBassEnergy() : 0;
 
+      // 2. Drive the physics simulation loop (recovery = spring pull, friction = damping)
+      // Maps the recovery slider 1-100 directly to 0.01-1.0 coefficients
+      const recovery = Math.max(0.01, distortionRecovery / 100);
+      const friction = 0.90;
+      const displacements = engine.update(recovery, friction);
+
+      // 3. Set text styling and configurations - decoupled HSL color tint
+      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ascii-color').trim() || '#CCFF00';
+      const cellWidth = width / cols;
+      const cellHeight = height / rows;
+      const fontSize = Math.max(8, Math.min(cellHeight * 1.15, cellWidth * 1.8));
       context.font = `${fontSize}px "JetBrains Mono", monospace`;
       context.textAlign = 'left';
+      context.textBaseline = 'top';
 
-      for (let row = 0; row < asciiGrid.rows; row += 1) {
-        for (let col = 0; col < asciiGrid.cols; col += 1) {
-          const index = row * asciiGrid.cols + col;
-          const charIndex = clamp(
-            Math.round(asciiGrid.indices[index] + engine.shift[index]),
-            0,
-            asciiGrid.ramp.length - 1,
-          );
-          context.fillText(
-            asciiGrid.ramp[charIndex],
-            col * cellWidth + engine.x[index] * cellWidth * 0.18,
-            row * cellHeight + engine.y[index] * cellHeight * 0.18,
-          );
+      // Dynamically select character ramp preset to fix RAW/GRID/PROC modes
+      const ramp = RAMPS[matrixMode] || RAMPS.RAW;
+
+      // 4. Draw characters at physics-displaced locations
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const idx = r * cols + c;
+          const luma = luminanceData[idx];
+
+          // Map luminance value directly to the index of character ramp
+          const rampIndex = Math.min(ramp.length - 1, Math.max(0, Math.floor(luma * ramp.length)));
+          const char = ramp[rampIndex];
+
+          // Retain displacement vectors (displacements has structure [x, y, x, y, ...])
+          const dx = displacements[idx * 2];
+          const dy = displacements[idx * 2 + 1];
+
+          // Draw the character
+          const posX = c * cellWidth + dx * cellWidth;
+          const posY = r * cellHeight + dy * cellHeight;
+
+          context.fillText(char, posX, posY);
         }
       }
 
@@ -223,10 +273,69 @@ export default function CanvasStage({
 
     frameId = window.requestAnimationFrame(render);
     return () => window.cancelAnimationFrame(frameId);
-  }, [asciiGrid, distortionStrength, matrixMode, sourceImage]);
+  }, [grid, luminanceData, sourceImage, canvasBg, customBgColor, distortionRecovery, isAudioActive, matrixMode]);
+
+  // Handle canvas exporting triggers (JPEG, PNG, SVG)
+  useEffect(() => {
+    if (!exportTrigger || !grid || !luminanceData || !distortionEngineRef.current) {
+      return;
+    }
+
+    const { format } = exportTrigger;
+    const { cols, rows } = grid;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    if (format === 'SVG') {
+      const displacements = distortionEngineRef.current.displacements;
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      const cellWidth = width / cols;
+      const cellHeight = height / rows;
+      const fontSize = Math.max(8, Math.min(cellHeight * 1.15, cellWidth * 1.8));
+      
+      const ramp = RAMPS[matrixMode] || RAMPS.RAW;
+      const lines = [];
+      const offsetsX = new Float32Array(cols * rows);
+      const offsetsY = new Float32Array(cols * rows);
+      
+      for (let r = 0; r < rows; r++) {
+        let line = '';
+        for (let c = 0; c < cols; c++) {
+          const idx = r * cols + c;
+          const luma = luminanceData[idx];
+          const rampIndex = Math.min(ramp.length - 1, Math.max(0, Math.floor(luma * ramp.length)));
+          line += ramp[rampIndex];
+          
+          offsetsX[idx] = displacements[idx * 2] * cellWidth;
+          offsetsY[idx] = displacements[idx * 2 + 1] * cellHeight;
+        }
+        lines.push(line);
+      }
+      
+      import('../lib/exportService').then(({ exportSvg }) => {
+        exportSvg({
+          lines,
+          offsetsX,
+          offsetsY,
+          cols,
+          rows,
+          cellWidth,
+          cellHeight,
+          fontSize
+        });
+      });
+    } else {
+      // JPEG or PNG download
+      import('../lib/exportService').then(({ exportCanvas }) => {
+        exportCanvas(canvas, format.toLowerCase());
+      });
+    }
+  }, [exportTrigger, grid, luminanceData, matrixMode]);
 
   return (
-    <section ref={stageRef} className="flex-grow bg-surface-container-lowest relative overflow-hidden flex items-center justify-center">
+    <section ref={stageRef} className="flex-grow bg-surface-container-lowest relative overflow-hidden flex flex-col items-center justify-center pb-[50px]">
+      {/* Decorative Overlays */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-margin-sm left-margin-sm flex gap-4">
           <div className="w-4 h-4 border-t border-l border-outline-variant"></div>
@@ -235,38 +344,180 @@ export default function CanvasStage({
         <div className="absolute top-margin-sm right-margin-sm">
           <div className="w-4 h-4 border-t border-r border-outline-variant ml-auto"></div>
         </div>
-        <div className="absolute bottom-margin-sm left-margin-sm">
+        <div className="absolute bottom-[66px] left-margin-sm">
           <div className="w-4 h-4 border-b border-l border-outline-variant"></div>
         </div>
-        <div className="absolute bottom-margin-sm right-margin-sm flex flex-col items-end gap-2">
-          <span className="font-label-caps text-label-caps text-outline-variant uppercase">FPS: 60 // KERNEL_V2</span>
+        <div className="absolute bottom-[66px] right-margin-sm flex flex-col items-end gap-2">
+          <span className="font-label-caps text-label-caps text-outline-variant uppercase">FPS: 60 // KERNEL_V3</span>
           <div className="w-4 h-4 border-b border-r border-outline-variant"></div>
         </div>
       </div>
 
       <canvas
         ref={canvasRef}
-        className="ascii-canvas w-full h-full"
-        onMouseLeave={() => distortionEngineRef.current.clearPointer()}
+        style={{
+          width: `${canvasSize.width}px`,
+          height: `${canvasSize.height}px`,
+        }}
+        className="ascii-canvas border border-outline-variant transition-all duration-300"
         onMouseMove={(event) => {
-          if (!sourceImage || !asciiGrid) {
+          if (!sourceImage || !grid || !distortionEngineRef.current) {
             return;
           }
 
           const rect = event.currentTarget.getBoundingClientRect();
           const relativeX = (event.clientX - rect.left) / Math.max(rect.width, 1);
           const relativeY = (event.clientY - rect.top) / Math.max(rect.height, 1);
-          distortionEngineRef.current.setPointer(
-            relativeX * (asciiGrid.cols - 1),
-            relativeY * (asciiGrid.rows - 1),
+          
+          const x = relativeX * (grid.cols - 1);
+          const y = relativeY * (grid.rows - 1);
+          
+          const bassEnergy = isAudioActive ? audioAnalyzerRef.current.getBassEnergy() : 0;
+          
+          // Apply interactive force pushed away from mouse
+          // Scales with user set distortionStrength and real-time audio bass activity
+          const baseStrength = distortionStrength / 100;
+          const strength = baseStrength * (0.8 + bassEnergy * 2.5);
+          const radius = 5 + bassEnergy * 10;
+          
+          distortionEngineRef.current.applyForce(
+            x, 
+            y, 
+            radius, 
+            strength, 
+            distortionMode, 
+            performance.now()
           );
-        }}
-        onPointerDown={() => {
-          audioAnalyzerRef.current.start();
         }}
       />
 
-      <div className="absolute bottom-margin-md right-margin-md bg-background border border-outline-variant p-2 pointer-events-none neo-pop">
+      {/* Retro-techy brutalist upload container box centered in the stage when empty */}
+      {!sourceImage && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-surface-container-lowest z-20">
+          {/* Subtle falling pattern backdrop for the empty stage area */}
+          <div className="absolute inset-0 z-0 pointer-events-none opacity-[0.14] select-none">
+            <FallingPattern 
+              color="var(--accent-pop)" 
+              backgroundColor="transparent" 
+              duration={150} 
+              blurIntensity="0px" 
+              density={1}
+            />
+          </div>
+
+          <div 
+            onClick={() => canvasFileInputRef.current?.click()}
+            className="w-full max-w-[420px] border-2 border-dashed border-outline-variant hover:border-accent-pop bg-background p-8 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all duration-300 neo-pop hover:translate-y-[-2px] mx-margin-sm relative z-10"
+          >
+            {/* Displaying downloads ascii-art-text.png */}
+            <img 
+              src="/ascii-art-text.png" 
+              alt="ASCII Art Text" 
+              className="max-h-[110px] object-contain opacity-90 filter invert dark:invert-0"
+            />
+            
+            <div className="h-[1px] w-full bg-outline-variant"></div>
+            
+            <span className="font-headline-lg text-lg text-accent-pop uppercase tracking-tighter text-center">
+              UPLOAD ANY IMAGE
+            </span>
+            
+            <span className="font-data-mono text-[10px] text-on-surface-variant uppercase text-center tracking-wider leading-relaxed">
+              DRAG & DROP OR CLICK TO BROWSE<br />
+              SUPPORTED: PNG, JPG, WEBP
+            </span>
+            
+            <button 
+              type="button"
+              className="bg-accent-pop text-background font-data-mono font-bold py-2 px-4 text-xs uppercase border-2 border-black neo-pop-active flex items-center gap-2 mt-2"
+            >
+              <span>CHOOSE_FILE</span>
+              <span className="material-symbols-outlined text-sm">open_in_new</span>
+            </button>
+            
+            <input 
+              ref={canvasFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    if (typeof reader.result === 'string') {
+                      setSourceImage(reader.result);
+                    }
+                  };
+                  reader.readAsDataURL(file);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Canvas control micro-toolbar overlay */}
+      <div className="absolute bottom-0 left-0 right-0 bg-background border-t border-outline-variant px-margin-sm py-2.5 flex flex-wrap items-center justify-between z-10 font-data-mono text-[10px] gap-margin-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-on-surface-variant font-label-caps text-[9px] tracking-wider">ASPECT_RATIO:</span>
+          {['16:9', '4:3', '1:1', '9:16', 'FILL'].map((ratio) => (
+            <button
+              key={ratio}
+              onClick={() => setAspectRatio(ratio)}
+              className={`px-2 py-0.5 uppercase border border-outline-variant font-data-mono transition-all duration-200 ${
+                aspectRatio === ratio 
+                  ? 'bg-accent-pop text-background border-black font-bold neo-pop' 
+                  : 'hover:text-accent-pop hover:bg-surface-variant'
+              }`}
+            >
+              {ratio}
+            </button>
+          ))}
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <span className="text-on-surface-variant font-label-caps text-[9px] tracking-wider">CANVAS_BG:</span>
+          {['Black', 'Transparent', 'Custom'].map((bg) => (
+            <button
+              key={bg}
+              onClick={() => {
+                setCanvasBg(bg);
+                if (bg === 'Custom' && colorInputRef.current) {
+                  colorInputRef.current.click();
+                }
+              }}
+              className={`px-2 py-0.5 uppercase border border-outline-variant font-data-mono transition-all duration-200 ${
+                canvasBg === bg 
+                  ? 'bg-accent-pop text-background border-black font-bold neo-pop' 
+                  : 'hover:text-accent-pop hover:bg-surface-variant'
+              }`}
+            >
+              {bg}
+            </button>
+          ))}
+          <input
+            ref={colorInputRef}
+            type="color"
+            value={customBgColor}
+            onChange={(e) => {
+              setCustomBgColor(e.target.value);
+              setCanvasBg('Custom');
+            }}
+            className="w-5 h-5 bg-transparent border-0 cursor-pointer hidden"
+          />
+          {canvasBg === 'Custom' && (
+            <span 
+              className="text-[9px] uppercase border border-outline-variant px-1 font-bold"
+              style={{ color: customBgColor }}
+            >
+              {customBgColor}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="absolute bottom-margin-md right-margin-md bg-background border border-outline-variant p-2 pointer-events-none neo-pop mb-[40px]">
         <div className="font-data-mono text-[10px] text-accent-pop uppercase">
           PROCESS_ID: 0x9AF4<br />
           BUFFER_STATUS: REACTIVE<br />

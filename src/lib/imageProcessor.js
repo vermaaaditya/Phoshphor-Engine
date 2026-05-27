@@ -1,35 +1,38 @@
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value))
-}
-
-function adjustLuminance(value, brightness, contrast, invert) {
-  const normalized = value / 255
-  const contrasted = (normalized - 0.5) * (1 + contrast / 100) + 0.5
-  const brightened = contrasted + brightness / 100
-  const clamped = clamp(brightened, 0, 1)
-  const output = invert ? 1 - clamped : clamped
-  return output * 255
-}
-
-export function processImageToLuminance(image, cols, rows, settings, canvas, context) {
-  canvas.width = cols
-  canvas.height = rows
-  context.clearRect(0, 0, cols, rows)
-  context.drawImage(image, 0, 0, cols, rows)
-
-  const imageData = context.getImageData(0, 0, cols, rows)
-  const { data } = imageData
-  const luminance = new Float32Array(cols * rows)
-
-  for (let i = 0, pixelIndex = 0; i < data.length; i += 4, pixelIndex += 1) {
-    const luma = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
-    luminance[pixelIndex] = adjustLuminance(
-      luma,
-      settings.brightness,
-      settings.contrast,
-      settings.invert,
-    )
+/**
+ * Processes an HTMLImageElement to yield a 1D Float32Array of normalized luminance values.
+ * 
+ * @param {HTMLImageElement} image - The source image element
+ * @param {number} cols - Target columns count (width of grid)
+ * @param {number} rows - Target rows count (height of grid)
+ * @returns {Float32Array} 1D array of luminance values (0.0 to 1.0)
+ */
+export default function processImage(image, cols, rows) {
+  const canvas = document.createElement('canvas');
+  canvas.width = cols;
+  canvas.height = rows;
+  
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return new Float32Array(cols * rows);
   }
 
-  return luminance
+  // Draw the image at the exact low-resolution columns x rows grid dimensions
+  ctx.drawImage(image, 0, 0, cols, rows);
+  
+  // Retrieve raw pixel values (R, G, B, A per pixel)
+  const imgData = ctx.getImageData(0, 0, cols, rows);
+  const data = imgData.data;
+  const luminance = new Float32Array(cols * rows);
+  
+  // Loop through pixels and compute weighted luminance normalized to [0.0, 1.0]
+  for (let i = 0; i < luminance.length; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    
+    // Luminance formula: (R * 0.299 + G * 0.587 + B * 0.114) / 255
+    luminance[i] = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+  }
+  
+  return luminance;
 }
